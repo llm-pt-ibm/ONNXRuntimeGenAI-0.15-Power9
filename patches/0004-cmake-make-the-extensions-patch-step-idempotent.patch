@@ -1,0 +1,28 @@
+From 89038ab6726bd2fb66217b91b76dc40d0a687fe8 Mon Sep 17 00:00:00 2001
+From: llm-pt-ibm <llm-pt-ibm@ufcg.edu.br>
+Date: Thu, 6 Aug 2026 15:16:31 +0000
+Subject: [PATCH 4/4] cmake: make the extensions patch step idempotent
+
+FetchContent re-runs PATCH_COMMAND whenever the configure step re-runs, so
+a second configure hit "patch does not apply" on the already-patched tree.
+Reset the checkout before applying.
+---
+ cmake/external/onnxruntime_external_deps.cmake | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/cmake/external/onnxruntime_external_deps.cmake b/cmake/external/onnxruntime_external_deps.cmake
+index 7ce813e..20fcd4a 100644
+--- a/cmake/external/onnxruntime_external_deps.cmake
++++ b/cmake/external/onnxruntime_external_deps.cmake
+@@ -84,7 +84,10 @@ set(_ortx_patch_command "")
+ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(powerpc|ppc)")
+   # See the patch header: onnxruntime-extensions' PowerPC branch uses the system
+   # zlib, but image_encoder.hpp still pins the vendored zlib version.
+-  set(_ortx_patch_command git apply --ignore-space-change --ignore-whitespace
++  # "git checkout -- ." first so re-running the patch step on an already-patched
++  # tree is a no-op instead of a hard "patch does not apply" failure.
++  set(_ortx_patch_command git checkout -- .
++      COMMAND git apply --ignore-space-change --ignore-whitespace
+       "${PROJECT_SOURCE_DIR}/cmake/patches/onnxruntime_extensions/0001-ppc64le-allow-system-zlib.patch")
+ endif()
+ 

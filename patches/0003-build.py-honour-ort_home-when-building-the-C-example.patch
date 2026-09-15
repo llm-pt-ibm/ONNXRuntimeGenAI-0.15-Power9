@@ -1,0 +1,34 @@
+From d0678f6eb394197b988999062c87eb5afdcba8c7 Mon Sep 17 00:00:00 2001
+From: llm-pt-ibm <llm-pt-ibm@ufcg.edu.br>
+Date: Thu, 6 Aug 2026 15:13:31 +0000
+Subject: [PATCH 3/4] build.py: honour --ort_home when building the C examples
+
+build_examples() hardcoded REPO_ROOT/ort/{include,lib}, the location used
+when cmake downloads ONNX Runtime itself. Any build that supplies its own
+runtime with --ort_home (the only option on platforms with no prebuilt ORT
+package, e.g. ppc64le) therefore failed with:
+
+    examples/c/src/common.h:18:10: fatal error: onnxruntime_cxx_api.h: No such file or directory
+
+Not ppc64le-specific -- reproduces on any --ort_home build.
+---
+ build.py | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/build.py b/build.py
+index 7e32daf..f8ba1c0 100644
+--- a/build.py
++++ b/build.py
+@@ -968,8 +968,10 @@ def build_examples(args: argparse.Namespace, env: dict[str, str]):
+ 
+     samples_to_build = ["-DMODEL_QA=ON", "-DMODEL_CHAT=ON", "-DMODEL_MM=ON", "-DWHISPER=ON", "-DNEMOTRON_SPEECH=ON"]
+ 
+-    ort_include_dir = REPO_ROOT / "ort" / "include"
+-    ort_lib_dir = REPO_ROOT / "ort" / "lib"
++    # Honour --ort_home; only fall back to the downloaded-into-repo location.
++    ort_root = args.ort_home if args.ort_home else REPO_ROOT / "ort"
++    ort_include_dir = ort_root / "include"
++    ort_lib_dir = ort_root / "lib"
+     oga_include_dir = REPO_ROOT / "src"
+     oga_lib_dir = args.build_dir
+     if util.is_windows():
