@@ -99,7 +99,7 @@ pip install "wheel==0.47.0" "pybind11==3.0.4" requests
 git clone --recursive -b v0.15.0 https://github.com/microsoft/onnxruntime-genai.git
 cd onnxruntime-genai && git am ../patches/*.patch
 
-bash build/build_genai_cpu_power9.sh
+bash cpu/build/build_genai_cpu_power9.sh
 ```
 
 `zlib` in the environment is not optional — it is what the PowerPC libpng branch
@@ -129,13 +129,22 @@ per-token GEMMs of decoding.
 
 The wheel requires a conda-forge `libstdcxx-ng` at runtime.
 
+## GPU (CUDA)
+
+A CUDA build also exists, reaching **177.8 tok/s** on Phi-3-mini int4 against a
+Tesla V100 — 17× the CPU figure. The same four patches apply unchanged; all the
+CUDA work lives in the ONNX Runtime repository.
+
+See [`gpu/README.md`](gpu/README.md).
+
 ## Repository layout
 
 ```
-patches/   the four commits, as git-format-patch files
-build/     build script, with toolchain rationale in the header
-tests/     end-to-end generation and determinism check
-docs/      build troubleshooting write-up
+patches/     the four commits, as git-format-patch files
+cpu/build/   build script, with toolchain rationale in the header
+cpu/tests/   end-to-end generation and determinism check
+gpu/         CUDA build script, model fetcher, tests
+docs/        build troubleshooting and validation results
 ```
 
 ---
