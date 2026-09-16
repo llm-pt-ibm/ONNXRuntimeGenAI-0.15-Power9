@@ -19,11 +19,64 @@ Phi-3-mini-4k int4 (`cuda/cuda-int4-rtn-block-32`):
 
 ## The patches
 
-**The same four CPU patches apply** — they are build plumbing (architecture
-detection, the zlib pin, `--ort_home`, patch idempotency) and are orthogonal to
-the execution provider. There is no genai-specific CUDA patch.
+**The same four CPU patches apply, unchanged** — they are build plumbing
+(architecture detection, the zlib pin, `--ort_home`, patch idempotency) and are
+orthogonal to the execution provider. There is no genai-specific CUDA patch:
+genai's own CUDA code compiled cleanly on ppc64le the first time.
 
-All the CUDA-side work lives in the ONNX Runtime repository.
+All three CUDA *patches* live in the ONNX Runtime repository.
+
+## What genai actually contributes on the GPU
+
+It is easy to assume genai is a thin wrapper that forwards everything to ONNX
+Runtime. It is not, and the wheel shows it:
+
+| | CPU wheel | CUDA wheel |
+|---|---|---|
+| `libonnxruntime-genai.so` | 7.5 MB | 7.5 MB — byte-identical, links no CUDA |
+| `libonnxruntime-genai-cuda.so` | — | **11.0 MB** |
+
+The CUDA library links `libcudart`, `libcublas` and `libcublasLt`, and carries a
+**9.7 MB `.nv_fatbin`** — compiled GPU device code. Its symbols do not show up
+under `nm -D` because the library exports a narrow interface and keeps the
+kernels internal; the fatbin section is the proof.
+
+Source in `src/cuda/`, 21 files:
+
+```
+cuda_sampling.cu            sampling (top-p, temperature)
+cuda_topk.cu + 9 .cuh       top-k, with nine different strategies
+beam_search_scorer_cuda.cu  beam search scoring
+beam_search_topk.cu         beam search top-k
+search_cuda.cu              the generation loop on device
+model_kernels.cu            assorted model-adjacent kernels
+```
+
+**None of it is the model forward pass** — that stays in ONNX Runtime. This is
+the generation loop: choose the next token, maintain the beams, update the KV
+cache bookkeeping.
+
+### Why it has to be on the GPU
+
+Latency, not throughput. If sampling ran on the host, every token would require
+copying the logits back — 128,256 floats (~513 KB) for Llama 3.2, 32,064 for
+Phi-3. The bandwidth is affordable at 178 tok/s; the **synchronization point on
+every token** is not: it drains the GPU pipeline and serializes what should
+overlap.
+
+Nine top-k implementations in one directory is a reasonable proxy for how much
+this matters — that kernel sits directly on the per-token critical path.
+
+### What this means for the port
+
+The division of labour is clean, and it is why this repository needed no CUDA
+patch:
+
+| | Where it runs | Who fixed it for POWER9 |
+|---|---|---|
+| Transformer layers, GEMMs | ONNX Runtime CUDA EP | the three ORT patches |
+| Sampling, top-k, beam search | genai's own CUDA kernels | nothing needed |
+| Tokenization, chat template | genai, host side | nothing needed |
 
 ## Building
 

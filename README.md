@@ -5,9 +5,13 @@ from source. This repository contains the four patches needed to make that
 build succeed, the build script, and an end-to-end generation test.
 
 The library itself is architecture-neutral C++ — tokenization, the generation
-loop, KV cache management, sampling. It does no math of its own; it delegates to
-ONNX Runtime. Every problem found here was in **build plumbing**, not in
-execution code.
+loop, KV cache management, sampling. It does not implement the model; the
+transformer layers and their GEMMs are ONNX Runtime's job. Every problem found
+here was in **build plumbing**, not in execution code.
+
+That said, genai is not a thin wrapper: it does implement the *loop* that drives
+the model, and on GPU that loop carries its own CUDA kernels — see
+[GPU (CUDA)](#gpu-cuda) below.
 
 > **This is only half of the port.** genai compiles and produces correct output
 > with these four patches, but generation runs at 0.13 tok/s unless ONNX Runtime
@@ -132,8 +136,41 @@ The wheel requires a conda-forge `libstdcxx-ng` at runtime.
 ## GPU (CUDA)
 
 A CUDA build also exists, reaching **177.8 tok/s** on Phi-3-mini int4 against a
-Tesla V100 — 17× the CPU figure. The same four patches apply unchanged; all the
-CUDA work lives in the ONNX Runtime repository.
+Tesla V100 — 17× the CPU figure.
+
+**The same four patches apply unchanged.** They are build plumbing and are
+orthogonal to the execution provider; genai's own CUDA code compiled cleanly on
+ppc64le. All three CUDA *patches* live in the ONNX Runtime repository.
+
+But genai does ship real CUDA code of its own. The CUDA wheel carries a second
+library:
+
+| | CPU wheel | CUDA wheel |
+|---|---|---|
+| `libonnxruntime-genai.so` | 7.5 MB | 7.5 MB — byte-identical |
+| `libonnxruntime-genai-cuda.so` | — | **11.0 MB** |
+
+The main library is the same in both and links no CUDA at all. Everything GPU
+lives in the second one, which links `libcudart`, `libcublas` and `libcublasLt`
+and carries a **9.7 MB `.nv_fatbin`** section — compiled device code, not host
+code calling out to a library.
+
+What is in it, from `src/cuda/` (21 `.cu`/`.cuh` files):
+
+```
+cuda_sampling.cu          cuda_topk.cu             search_cuda.cu
+beam_search_scorer_cuda.cu  beam_search_topk.cu    model_kernels.cu
+cuda_topk_{cascaded,full,hybrid,iterative,select,warp,radix}_sort.cuh  ...
+```
+
+None of that is the model forward pass — it is **sampling, top-k/top-p, beam
+search and KV cache bookkeeping**, running on the device.
+
+The reason is latency, not throughput. Sampling on the CPU would mean copying
+the logits vector back every single token — 128,256 floats (~513 KB) for
+Llama 3.2. The bandwidth is affordable; the **synchronization point** on every
+token is not. That is also why there are nine different top-k implementations in
+that directory: it sits directly between you and per-token latency.
 
 See [`gpu/README.md`](gpu/README.md).
 
